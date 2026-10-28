@@ -1,0 +1,101 @@
+{
+ "task": "place_can_basket",
+ "start_seed": 100000,
+ "want": 20,
+ "accepted": [
+  {
+   "seed": 100001,
+   "seconds": 12.6
+  },
+  {
+   "seed": 100002,
+   "seconds": 15.2
+  },
+  {
+   "seed": 100003,
+   "seconds": 18.0
+  },
+  {
+   "seed": 100004,
+   "seconds": 11.8
+  },
+  {
+   "seed": 100005,
+   "seconds": 13.2
+  },
+  {
+   "seed": 100006,
+   "seconds": 12.9
+  },
+  {
+   "seed": 100007,
+   "seconds": 13.8
+  },
+  {
+   "seed": 100008,
+   "seconds": 14.1
+  },
+  {
+   "seed": 100009,
+   "seconds": 13.8
+  },
+  {
+   "seed": 100011,
+   "seconds": 19.0
+  },
+  {
+   "seed": 100012,
+   "seconds": 13.7
+  },
+  {
+   "seed": 100013,
+   "seconds": 12.0
+  },
+  {
+   "seed": 100014,
+   "seconds": 15.1
+  },
+  {
+   "seed": 100015,
+   "seconds": 11.5
+  },
+  {
+   "seed": 100016,
+   "seconds": 9.8
+  },
+  {
+   "seed": 100017,
+   "seconds": 12.4
+  },
+  {
+   "seed": 100018,
+   "seconds": 12.7
+  },
+  {
+   "seed": 100019,
+   "seconds": 13.6
+  },
+  {
+   "seed": 100020,
+   "seconds": 15.0
+  },
+  {
+   "seed": 100021,
+   "seconds": 10.5
+  }
+ ],
+ "rejected": [
+  {
+   "seed": 100000,
+   "seconds": 27.9,
+   "reason": "check_success_false"
+  },
+  {
+   "seed": 100010,
+   "seconds": 12.6,
+   "reason": "check_success_false"
+  }
+ ],
+ "done": true,
+ "candidates_tried": 22
+}

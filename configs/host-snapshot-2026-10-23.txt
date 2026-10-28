@@ -1,0 +1,6 @@
+# Host snapshot taken 2026-10-23 (RunPod pod, before teardown)
+python 3.12.3 ; uv 0.9.0 ; GPU NVIDIA RTX A6000 ; driver 595.91.07 (580.159.04 when teacher_v1 ran)
+venv size 9.5G ; uv cache 11G ; HF cache 23G at /workspace/.cache/huggingface (geesefs network volume)
+requirements-lock.txt verified identical to `uv pip freeze` on this date
+RoboTwin and lerobot checkouts had no local modifications (git status clean); patches live only in the venv via scripts/patch_sim_deps.py
+teacher_v1 run finished: 200/200 episodes, overall 83.0% success (eval/results/teacher_v1/summary.md)

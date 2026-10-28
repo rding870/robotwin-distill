@@ -1,0 +1,11 @@
+.venv/
+logs/
+eval/results/
+RoboTwin/assets/embodiments/
+RoboTwin/assets/objects/
+RoboTwin/assets/__MACOSX/
+RoboTwin/envs/curobo/
+__pycache__/
+*.pyc
+lerobot/
+RoboTwin/

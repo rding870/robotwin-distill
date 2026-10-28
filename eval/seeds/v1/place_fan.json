@@ -1,0 +1,111 @@
+{
+ "task": "place_fan",
+ "start_seed": 100000,
+ "want": 20,
+ "accepted": [
+  {
+   "seed": 100002,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100003,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100004,
+   "seconds": 1.7
+  },
+  {
+   "seed": 100005,
+   "seconds": 2.0
+  },
+  {
+   "seed": 100006,
+   "seconds": 1.7
+  },
+  {
+   "seed": 100007,
+   "seconds": 2.3
+  },
+  {
+   "seed": 100008,
+   "seconds": 4.0
+  },
+  {
+   "seed": 100009,
+   "seconds": 1.9
+  },
+  {
+   "seed": 100010,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100011,
+   "seconds": 2.1
+  },
+  {
+   "seed": 100012,
+   "seconds": 2.4
+  },
+  {
+   "seed": 100013,
+   "seconds": 3.1
+  },
+  {
+   "seed": 100014,
+   "seconds": 3.8
+  },
+  {
+   "seed": 100015,
+   "seconds": 4.3
+  },
+  {
+   "seed": 100016,
+   "seconds": 2.0
+  },
+  {
+   "seed": 100017,
+   "seconds": 2.0
+  },
+  {
+   "seed": 100019,
+   "seconds": 2.7
+  },
+  {
+   "seed": 100020,
+   "seconds": 2.1
+  },
+  {
+   "seed": 100021,
+   "seconds": 2.1
+  },
+  {
+   "seed": 100023,
+   "seconds": 2.1
+  }
+ ],
+ "rejected": [
+  {
+   "seed": 100000,
+   "seconds": 16.8,
+   "reason": "plan_failed"
+  },
+  {
+   "seed": 100001,
+   "seconds": 2.9,
+   "reason": "plan_failed"
+  },
+  {
+   "seed": 100018,
+   "seconds": 2.6,
+   "reason": "plan_failed"
+  },
+  {
+   "seed": 100022,
+   "seconds": 0.5,
+   "reason": "AssertionError: target_pose cannot be None for move action."
+  }
+ ],
+ "done": true,
+ "candidates_tried": 24
+}

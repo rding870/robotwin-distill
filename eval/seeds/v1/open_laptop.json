@@ -1,0 +1,90 @@
+{
+ "task": "open_laptop",
+ "start_seed": 100000,
+ "want": 20,
+ "accepted": [
+  {
+   "seed": 100000,
+   "seconds": 20.7
+  },
+  {
+   "seed": 100001,
+   "seconds": 4.3
+  },
+  {
+   "seed": 100002,
+   "seconds": 2.4
+  },
+  {
+   "seed": 100003,
+   "seconds": 2.7
+  },
+  {
+   "seed": 100004,
+   "seconds": 6.1
+  },
+  {
+   "seed": 100005,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100006,
+   "seconds": 3.7
+  },
+  {
+   "seed": 100007,
+   "seconds": 2.8
+  },
+  {
+   "seed": 100008,
+   "seconds": 4.6
+  },
+  {
+   "seed": 100009,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100010,
+   "seconds": 2.6
+  },
+  {
+   "seed": 100011,
+   "seconds": 3.2
+  },
+  {
+   "seed": 100012,
+   "seconds": 4.6
+  },
+  {
+   "seed": 100013,
+   "seconds": 2.2
+  },
+  {
+   "seed": 100014,
+   "seconds": 2.7
+  },
+  {
+   "seed": 100015,
+   "seconds": 3.5
+  },
+  {
+   "seed": 100016,
+   "seconds": 2.5
+  },
+  {
+   "seed": 100017,
+   "seconds": 4.2
+  },
+  {
+   "seed": 100018,
+   "seconds": 2.9
+  },
+  {
+   "seed": 100019,
+   "seconds": 3.2
+  }
+ ],
+ "rejected": [],
+ "done": true,
+ "candidates_tried": 20
+}

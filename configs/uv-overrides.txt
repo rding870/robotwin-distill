@@ -1,0 +1,10 @@
+# Resolver override used for every `uv pip install` in this project.
+#
+# mplib==0.2.1 (last release, Aug 2024) is a pybind11 extension built against the
+# NumPy 1.x ABI; passing a NumPy 2 array into it segfaults (mplib/sapien_utils/
+# conversion.py:310 via RoboTwin's planner). LeRobot pins numpy>=2,<2.3 only in
+# metadata; its own docker/Dockerfile.benchmark.robotwin ends up on numpy 1.x the
+# same way. Wheels built against NumPy 2 headers run on 1.26 at the C level.
+numpy==1.26.4
+# pyarrow>=22 requires NumPy 2 at import time; 21.0.0 is the last that works on 1.26.
+pyarrow==21.0.0

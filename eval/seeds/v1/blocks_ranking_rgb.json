@@ -1,0 +1,90 @@
+{
+ "task": "blocks_ranking_rgb",
+ "start_seed": 100000,
+ "want": 20,
+ "accepted": [
+  {
+   "seed": 100000,
+   "seconds": 22.7
+  },
+  {
+   "seed": 100001,
+   "seconds": 5.0
+  },
+  {
+   "seed": 100002,
+   "seconds": 5.6
+  },
+  {
+   "seed": 100003,
+   "seconds": 6.7
+  },
+  {
+   "seed": 100004,
+   "seconds": 5.4
+  },
+  {
+   "seed": 100005,
+   "seconds": 5.1
+  },
+  {
+   "seed": 100006,
+   "seconds": 5.9
+  },
+  {
+   "seed": 100007,
+   "seconds": 5.2
+  },
+  {
+   "seed": 100008,
+   "seconds": 8.0
+  },
+  {
+   "seed": 100009,
+   "seconds": 5.4
+  },
+  {
+   "seed": 100010,
+   "seconds": 6.0
+  },
+  {
+   "seed": 100011,
+   "seconds": 5.5
+  },
+  {
+   "seed": 100012,
+   "seconds": 4.9
+  },
+  {
+   "seed": 100013,
+   "seconds": 4.7
+  },
+  {
+   "seed": 100014,
+   "seconds": 5.5
+  },
+  {
+   "seed": 100015,
+   "seconds": 8.1
+  },
+  {
+   "seed": 100016,
+   "seconds": 5.8
+  },
+  {
+   "seed": 100017,
+   "seconds": 7.5
+  },
+  {
+   "seed": 100018,
+   "seconds": 6.8
+  },
+  {
+   "seed": 100019,
+   "seconds": 5.4
+  }
+ ],
+ "rejected": [],
+ "done": true,
+ "candidates_tried": 20
+}

@@ -1,0 +1,90 @@
+{
+ "task": "pick_dual_bottles",
+ "start_seed": 100000,
+ "want": 20,
+ "accepted": [
+  {
+   "seed": 100000,
+   "seconds": 25.2
+  },
+  {
+   "seed": 100001,
+   "seconds": 12.1
+  },
+  {
+   "seed": 100002,
+   "seconds": 9.6
+  },
+  {
+   "seed": 100003,
+   "seconds": 9.7
+  },
+  {
+   "seed": 100004,
+   "seconds": 11.9
+  },
+  {
+   "seed": 100005,
+   "seconds": 10.8
+  },
+  {
+   "seed": 100006,
+   "seconds": 8.2
+  },
+  {
+   "seed": 100007,
+   "seconds": 6.2
+  },
+  {
+   "seed": 100008,
+   "seconds": 11.5
+  },
+  {
+   "seed": 100009,
+   "seconds": 10.3
+  },
+  {
+   "seed": 100010,
+   "seconds": 10.1
+  },
+  {
+   "seed": 100011,
+   "seconds": 8.6
+  },
+  {
+   "seed": 100012,
+   "seconds": 10.3
+  },
+  {
+   "seed": 100013,
+   "seconds": 13.6
+  },
+  {
+   "seed": 100014,
+   "seconds": 12.3
+  },
+  {
+   "seed": 100015,
+   "seconds": 11.2
+  },
+  {
+   "seed": 100016,
+   "seconds": 11.7
+  },
+  {
+   "seed": 100017,
+   "seconds": 9.2
+  },
+  {
+   "seed": 100018,
+   "seconds": 11.4
+  },
+  {
+   "seed": 100019,
+   "seconds": 11.9
+  }
+ ],
+ "rejected": [],
+ "done": true,
+ "candidates_tried": 20
+}

@@ -112,6 +112,7 @@ opencv-python-headless==4.13.0.92
 packaging==25.0
 pandas==2.3.3
 parso==0.8.7
+peft==0.21.2
 pexpect==4.9.0
 pillow==12.3.0
 platformdirs==4.13.3

@@ -74,6 +74,32 @@ def _lat_stats(xs):
     }
 
 
+def _patch_expert_state(tasks) -> dict:
+    """Some RoboTwin tasks set state in the expert's play_once() that check_success() reads.
+    RoboTwin's eval_policy.py runs play_once() on the same task object before the policy episode,
+    so that state carries over; LeRobot's env never calls play_once(). Recompute it after
+    setup_demo() exactly as play_once() does (a pure function of the seeded scene)."""
+    import importlib
+
+    patched = {}
+    if "open_laptop" in tasks:
+        mod = importlib.import_module("envs.open_laptop")
+        cls = mod.open_laptop
+        if not getattr(cls, "_arm_tag_patched", False):
+            orig_setup = cls.setup_demo
+
+            def setup_demo(self, *a, **k):
+                r = orig_setup(self, *a, **k)
+                face_prod = mod.get_face_prod(self.laptop.get_pose().q, [1, 0, 0], [1, 0, 0])
+                self.arm_tag = mod.ArmTag("left" if face_prod > 0 else "right")
+                return r
+
+            cls.setup_demo = setup_demo
+            cls._arm_tag_patched = True
+        patched["open_laptop"] = "arm_tag set after setup_demo as in play_once (face_prod of laptop pose)"
+    return patched
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seeds", required=True, help="eval/seeds/<version>/frozen_seeds.json")
@@ -185,6 +211,7 @@ def main():
             "step_limit_per_task": step_limit,
             "eval_seed": cfg.seed,
             "prompt_cache": not wrapper.no_prompt_cache,
+            "expert_state_patches": _patch_expert_state(tasks),
             "software": {
                 "python": platform.python_version(),
                 "torch": torch.__version__,

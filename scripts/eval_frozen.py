@@ -48,6 +48,21 @@ def _episode_seed(eval_seed: int, task: str, seed: int) -> int:
     return int.from_bytes(h[:4], "little") & 0x7FFFFFFF
 
 
+def _tensor_sha(*tensors) -> str:
+    """Bit-level fingerprint of tensors (dtype + shape + bytes), for run-to-run reproducibility checks."""
+    import torch
+
+    h = hashlib.sha256()
+    for t in tensors:
+        if t is None:
+            h.update(b"none")
+            continue
+        t = t.detach().cpu().contiguous()
+        h.update(f"{t.dtype}{tuple(t.shape)}".encode())
+        h.update(t.reshape(-1).view(torch.uint8).numpy().tobytes())  # raw bytes; numpy has no bf16
+    return h.hexdigest()
+
+
 def _harness_version() -> dict:
     """Identify the harness code itself; results change when it does (e.g. expert-state patches)."""
     try:
@@ -128,6 +143,12 @@ def main():
                     help="stop the run at the first episode that raises (smoke runs before a full run)")
     ap.add_argument("--no-prompt-cache", action="store_true",
                     help="re-encode the text prompt with UMT5 on every episode (LeRobot default) instead of caching per prompt string")
+    ap.add_argument("--prompt-cache-dir", default=str(PROJ / ".cache" / "prompt_embeds"),
+                    help="on-disk prompt-embedding cache shared across runs (keyed by prompt + text-encoder path)")
+    ap.add_argument("--warmup-steps", type=int, default=100,
+                    help="untimed warm-up rollout of this many env steps before the first timed episode (0 = off)")
+    ap.add_argument("--nfe", type=int, default=None,
+                    help="denoising steps for both the video and the action loop (sets --video-steps and --action-steps)")
     ap.add_argument("--episode-length", default="robotwin",
                     help="max env steps per episode: 'robotwin' = RoboTwin's per-task limit from "
                          "RoboTwin/task_config/_eval_step_limit.yml (default); an int applies to every task; "
@@ -135,6 +156,10 @@ def main():
     ap.add_argument("--video-steps", type=int, default=None, help="override policy.num_inference_steps (video denoising NFE)")
     ap.add_argument("--action-steps", type=int, default=None, help="override policy.action_num_inference_steps (action denoising NFE)")
     wrapper, rest = ap.parse_known_args()
+    if wrapper.nfe is not None:
+        if wrapper.video_steps is not None or wrapper.action_steps is not None:
+            ap.error("--nfe sets both loops; do not combine it with --video-steps/--action-steps")
+        wrapper.video_steps = wrapper.action_steps = wrapper.nfe
     if rest and rest[0] == "--":
         rest = rest[1:]
 
@@ -268,7 +293,7 @@ def main():
         log.info("policy loaded in %.0fs", load_s)
 
         # ---- instrumentation ------------------------------------------------------------------
-        timing = {"chunk": [], "select": []}
+        timing = {"chunk": [], "select": [], "chunk_sha": []}
 
         def _sync():
             if torch.cuda.is_available():
@@ -280,6 +305,7 @@ def main():
             _sync(); t = time.perf_counter()
             r = orig_chunk(*a, **k)
             _sync(); timing["chunk"].append(time.perf_counter() - t)
+            timing["chunk_sha"].append(_tensor_sha(r)[:16])  # outside the timed region
             return r
 
         policy.predict_action_chunk = timed_chunk
@@ -296,13 +322,31 @@ def main():
 
         if not wrapper.no_prompt_cache and hasattr(policy, "_encode_prompt"):
             # policy.reset() drops the prompt embeddings every episode and UMT5 runs on CPU; the
-            # embedding is a pure function of the prompt string, so cache it. Identical outputs.
+            # embedding is a pure function of (prompt, text encoder), so cache it in memory and on
+            # disk across runs. Identical outputs; each embedding's sha256 goes to prompt_embeds.json.
             cache: dict[str, tuple] = {}
             orig_encode = policy._encode_prompt
+            cache_dir = Path(wrapper.prompt_cache_dir)
+            encoder_id = str(getattr(cfg.policy, "wan_pretrained_path", ""))
+            emb_log_file = out / "prompt_embeds.json"
+            emb_log = json.loads(emb_log_file.read_text()) if emb_log_file.exists() else {}
 
             def cached_encode(prompt):
                 if prompt not in cache:
-                    cache[prompt] = orig_encode(prompt)
+                    key = hashlib.sha256(f"{encoder_id}\n{prompt}".encode()).hexdigest()
+                    path = cache_dir / f"{key}.pt"
+                    if path.exists():
+                        cache[prompt] = tuple(torch.load(path, weights_only=True))
+                        src = "disk"
+                    else:
+                        cache[prompt] = orig_encode(prompt)
+                        cache_dir.mkdir(parents=True, exist_ok=True)
+                        tmp = path.with_suffix(".tmp")
+                        torch.save(list(cache[prompt]), tmp)
+                        tmp.replace(path)
+                        src = "encoded"
+                    emb_log[prompt] = {"sha256": _tensor_sha(*cache[prompt]), "source": src, "file": path.name}
+                    emb_log_file.write_text(json.dumps(emb_log, indent=1))
                 return cache[prompt]
 
             policy._encode_prompt = cached_encode
@@ -310,6 +354,18 @@ def main():
         # ---- episodes -------------------------------------------------------------------------
         fps = 10
         n_done_now = 0
+        if wrapper.warmup_steps > 0 and len(done) < n_total:
+            # The first ~3 chunks in a process run 3-4x slower (cuDNN autotuning, lazy CUDA init),
+            # which inflated whichever task ran first. One untimed, unrecorded rollout warms the GPU;
+            # every episode is reseeded on its own, so this cannot change a recorded outcome.
+            wt = next(t for t in tasks if any((t, s) not in done for s in plan[t]))
+            log.info("warm-up: [%s] seed=%d, %d steps (untimed, not recorded)", wt, plan[wt][0], wrapper.warmup_steps)
+            wenvs = make_env(replace(cfg.env, task=wt, episode_length=wrapper.warmup_steps), n_envs=1, use_async_envs=False)
+            try:
+                with torch.no_grad():
+                    rollout(wenvs[wt][0], policy, env_pre, env_post, preprocessor, postprocessor, seeds=[plan[wt][0]])
+            finally:
+                close_envs(wenvs)
         run_t0 = time.perf_counter()
         for task in tasks:
             todo = [s for s in plan[task] if (task, s) not in done]
@@ -327,7 +383,7 @@ def main():
                     if not wrapper.no_video:
                         def cb(e, _frames=frames):
                             _frames.append(e.envs[0].render())
-                    timing["chunk"].clear(); timing["select"].clear()
+                    timing["chunk"].clear(); timing["select"].clear(); timing["chunk_sha"].clear()
                     err = None
                     rng_seed = _episode_seed(cfg.seed, task, seed)
                     set_seed(rng_seed)
@@ -361,6 +417,8 @@ def main():
                         "first_chunk_s": round(chunk[0], 4) if chunk else None,
                         "steady_chunk_mean_s": round(sum(chunk[1:]) / len(chunk[1:]), 4) if len(chunk) > 1 else None,
                         "first_select_s": round(select[0], 4) if select else None,
+                        "chunk_sha": list(timing["chunk_sha"]),     # per-chunk action fingerprint (normalized policy output)
+                        "actions_sha": hashlib.sha256("".join(timing["chunk_sha"]).encode()).hexdigest()[:16],
                         "video": None,
                         "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     }

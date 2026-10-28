@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 lerobot/
 RoboTwin/
+.cache/

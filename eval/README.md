@@ -28,6 +28,24 @@ Before a full run, smoke one seed per task so env/harness faults surface in minu
 scripts/run_teacher_frozen.sh smoke_x --max-seeds-per-task 1 --no-video --abort-on-error
 ```
 
+## Reproducibility check
+
+```bash
+scripts/run_teacher_frozen.sh repro_a --nfe 30 --tasks <...> --max-seeds-per-task 10
+scripts/run_teacher_frozen.sh repro_b --nfe 30 --tasks <...> --max-seeds-per-task 10   # identical, after A
+python scripts/compare_runs.py eval/results/repro_a eval/results/repro_b --out eval/results/repro_report.md
+```
+`compare_runs.py` checks, strictest first: manifests identical (except run name/time); per-episode action
+fingerprints identical (`actions_sha`, sha256 of every normalized action chunk the policy returns, per chunk
+in `chunk_sha`); success/steps/error identical per (task, seed); success table identical; steady-state chunk
+latency within 5% (mean) / 10% (p95). Exit 0 iff all pass.
+
+Timing hygiene: `--warmup-steps` (default 100) runs one untimed, unrecorded rollout first, because the first
+~3 chunks in a process are 3-4x slower (cuDNN autotuning, lazy CUDA init). Prompt embeddings are cached on
+disk in `.cache/prompt_embeds/` (keyed by prompt + text-encoder path) so only the first run pays UMT5-on-CPU;
+`prompt_embeds.json` in each run records every embedding's sha256 and whether it was encoded or loaded.
+`--nfe N` sets both denoising loops (video and action) to N steps.
+
 ## Seeding
 
 Each episode reseeds Python/NumPy/torch (CPU + CUDA) with `sha256(f"{eval_seed}:{task}:{seed}")` before its

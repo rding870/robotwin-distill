@@ -50,6 +50,9 @@ uv pip install --overrides $OV "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0
 MAX_JOBS=48 uv pip install --overrides $OV --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@stable"
 git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git RoboTwin/envs/curobo
 (cd RoboTwin/envs/curobo && MAX_JOBS=48 uv pip install --overrides ../../../$OV -e . --no-build-isolation)   # TORCH_CUDA_ARCH_LIST from env.sh
+# Unpinned transitive deps resolve to whatever is newest; pull every drifted one back to the lock (before patching).
+uv pip install --overrides $OV $(uv pip freeze | diff <(grep -v '^#' requirements-lock.txt | sort) <(sort -) | grep '^< ' | cut -c3-)
+uv pip freeze | diff <(grep -v '^#' requirements-lock.txt | sort) <(sort -) && echo "matches lock"   # uninstall any extra '>' lines
 python scripts/patch_sim_deps.py                      # mplib `or collide` + sapien URDF/SRDF fixes (mirrors RoboTwin scripts/_install.sh)
 python scripts/download_assets.py                     # embodiments.zip + objects.zip @ pinned dataset rev, then update_embodiment_config_path.py
 hf download lerobot/lingbot_va_robotwin --revision 6d128a33268a8abb558bfc12d0f2d4e0225d7d64
@@ -57,6 +60,9 @@ for sub in vae text_encoder tokenizer; do hf download robbyant/lingbot-va-base -
 ```
 
 Notes
+* Rebuilt on a new pod 2026-10-28 (driver 595.91.07): without the lock step 29 packages drifted
+  (e.g. opencv-python 4.11 -> 5.0, scipy 1.17 -> 1.18). After it the freeze matched the lock exactly and
+  the expert smoke test below reproduced (100000 accepted, 100001 rejected, 100002 accepted).
 * `HF_HUB_ENABLE_HF_TRANSFER=1` is set globally on this host but `hf_transfer` is not installed; `unset` it before `hf download`.
 * `background_texture.zip` (~11 GB) is not downloaded; `demo_clean` (the config LeRobot's env uses) has `random_background: false`.
 

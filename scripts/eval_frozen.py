@@ -41,6 +41,23 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _episode_seed(eval_seed: int, task: str, seed: int) -> int:
+    """RNG seed for one episode: a pure function of (eval seed, task, scene seed), so the policy's
+    sampled noise does not depend on which episodes ran before it (resume, --tasks subsets)."""
+    h = hashlib.sha256(f"{eval_seed}:{task}:{seed}".encode()).digest()
+    return int.from_bytes(h[:4], "little") & 0x7FFFFFFF
+
+
+def _harness_version() -> dict:
+    """Identify the harness code itself; results change when it does (e.g. expert-state patches)."""
+    try:
+        dirty = bool(subprocess.check_output(["git", "-C", str(PROJ), "status", "--porcelain", "--", "scripts"],
+                                             text=True).strip())
+    except Exception:
+        dirty = None
+    return {"git_sha": _git_sha(PROJ), "scripts_dirty": dirty, "eval_frozen_sha256": _sha256(Path(__file__))}
+
+
 def _jsonable(o):
     if dataclasses.is_dataclass(o):
         return _jsonable(asdict(o))
@@ -107,6 +124,8 @@ def main():
     ap.add_argument("--tasks", default=None, help="comma-separated subset of the frozen tasks (default: all)")
     ap.add_argument("--max-seeds-per-task", type=int, default=None, help="dev runs: only the first N seeds per task")
     ap.add_argument("--no-video", action="store_true", help="skip per-episode head-camera mp4s")
+    ap.add_argument("--abort-on-error", action="store_true",
+                    help="stop the run at the first episode that raises (smoke runs before a full run)")
     ap.add_argument("--no-prompt-cache", action="store_true",
                     help="re-encode the text prompt with UMT5 on every episode (LeRobot default) instead of caching per prompt string")
     ap.add_argument("--episode-length", default="robotwin",
@@ -183,7 +202,7 @@ def main():
         device = get_safe_torch_device(cfg.policy.device, log=True)
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
-        set_seed(cfg.seed)
+        set_seed(cfg.seed)  # policy load; every episode is reseeded with _episode_seed()
 
         # ---- manifest -------------------------------------------------------------------------
         gpu = torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None
@@ -210,8 +229,10 @@ def main():
             "episode_length_mode": wrapper.episode_length,
             "step_limit_per_task": step_limit,
             "eval_seed": cfg.seed,
+            "rng_seeding": "per_episode: set_seed(sha256(f'{eval_seed}:{task}:{seed}')[:4] & 0x7fffffff)",
             "prompt_cache": not wrapper.no_prompt_cache,
             "expert_state_patches": _patch_expert_state(tasks),
+            "harness": _harness_version(),
             "software": {
                 "python": platform.python_version(),
                 "torch": torch.__version__,
@@ -308,6 +329,8 @@ def main():
                             _frames.append(e.envs[0].render())
                     timing["chunk"].clear(); timing["select"].clear()
                     err = None
+                    rng_seed = _episode_seed(cfg.seed, task, seed)
+                    set_seed(rng_seed)
                     t_ep = time.perf_counter()
                     try:
                         with torch.no_grad():
@@ -324,6 +347,7 @@ def main():
                     rec = {
                         "task": task,
                         "seed": seed,
+                        "rng_seed": rng_seed,
                         "success": success,
                         "n_steps": n_steps,
                         "step_limit": step_limit[task],
@@ -357,11 +381,16 @@ def main():
                              task, seed, success, n_steps, wall, infer_s, len(chunk),
                              rec["steady_chunk_mean_s"] or 0.0, len(done), n_total,
                              remaining * (elapsed / max(n_done_now, 1)) / 3600)
+                    if err and wrapper.abort_on_error:
+                        raise SystemExit(f"--abort-on-error: [{task}] seed={seed}: {err}")
             finally:
                 close_envs(envs)
 
-        write_summary(out, manifest, plan, success_summary)
+        summary = write_summary(out, manifest, plan, success_summary)
         log.info("done: %s", out)
+        if not summary["valid"]:
+            log.error("INVALID run: episodes raised in %s (see episodes.jsonl 'error')", summary["tasks_with_errors"])
+            sys.exit(3)
 
     def write_summary(out: Path, manifest: dict, plan: dict, success_summary) -> None:
         recs = [json.loads(l) for l in (out / "episodes.jsonl").read_text().splitlines() if l.strip()]
@@ -372,9 +401,15 @@ def main():
             s = success_summary([r["success"] for r in rs])
             steady = [x for r in rs for x in r["chunk_latency_s"][1:]]
             first = [r["first_chunk_s"] for r in rs if r["first_chunk_s"] is not None]
+            # An episode that raised is a harness/env fault, not a policy failure: count it in
+            # pc_success (conservative) but also report the rate over episodes that ran.
+            ran = success_summary([r["success"] for r in rs if not r["error"]])
             s.update({
                 "n_planned": None,
                 "n_errors": sum(1 for r in rs if r["error"]),
+                "n_ran": ran["n_episodes"],
+                "pc_success_ran": ran["pc_success"],
+                "pc_success_ran_ci95": ran["pc_success_ci95"],
                 "mean_steps": (sum(r["n_steps"] for r in rs if r["n_steps"]) / max(1, sum(1 for r in rs if r["n_steps"]))) if rs else None,
                 "mean_wall_s": sum(r["wall_s"] for r in rs) / len(rs) if rs else None,
                 "mean_inference_s": sum(r["inference_s"] for r in rs) / len(rs) if rs else None,
@@ -389,8 +424,11 @@ def main():
         for t, rs in by_task.items():
             a = agg(rs); a["n_planned"] = len(plan[t]); per_task[t] = a
         overall = agg(recs); overall["n_planned"] = sum(len(v) for v in plan.values())
+        tasks_with_errors = [t for t, a in per_task.items() if a["n_errors"]]
         summary = {"run_name": manifest["run_name"], "nfe": nfe, "seeds_file": manifest["seeds_file"],
                    "seeds_sha256": manifest["seeds_sha256"], "hardware": manifest["hardware"],
+                   "harness": manifest.get("harness"),
+                   "valid": not tasks_with_errors, "tasks_with_errors": tasks_with_errors,
                    "per_task": per_task, "overall": overall}
         (out / "summary.json").write_text(json.dumps(summary, indent=1))
 
@@ -405,18 +443,26 @@ def main():
             f"env robotwin action_mode={env.get('action_mode')} step_limit={manifest.get('episode_length_mode')} "
             f"({min(manifest['step_limit_per_task'].values())}-{max(manifest['step_limit_per_task'].values())}) | "
             f"seeds `{manifest['seeds_file']}` sha256 {manifest['seeds_sha256'][:12]} | {hw['gpu']} driver {hw['driver']} | "
-            f"torch {manifest['software']['torch']} lerobot {manifest['software']['lerobot_sha'][:8]} robotwin {manifest['software']['robotwin_sha'][:8]}",
+            f"torch {manifest['software']['torch']} lerobot {manifest['software']['lerobot_sha'][:8]} robotwin {manifest['software']['robotwin_sha'][:8]}"
+            f" | harness {(manifest.get('harness') or {}).get('git_sha') or '-'}"
+            f"{' (scripts dirty)' if (manifest.get('harness') or {}).get('scripts_dirty') else ''}",
             "",
-            "| task | episodes | success | rate % | 95% CI | errors | steady chunk s (mean/p95) | first chunk s | infer s/ep | env s/ep | wall s/ep |",
-            "|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        if tasks_with_errors:
+            lines += [f"**INVALID RUN:** episodes raised in {', '.join(tasks_with_errors)} "
+                      "(counted as failures in `rate %`; see `error` in episodes.jsonl).", ""]
+        lines += [
+            "| task | episodes | success | rate % | 95% CI | errors | rate % excl. errors | steady chunk s (mean/p95) | first chunk s | infer s/ep | env s/ep | wall s/ep |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for t, a in list(per_task.items()) + [("**overall**", overall)]:
             ci = a["pc_success_ci95"]; st = a["chunk_latency_steady"]; fc = a["chunk_latency_first"]
             lines.append(
                 f"| {t} | {a['n_episodes']}/{a['n_planned']} | {a['n_success']} | {f(a['pc_success'])} | "
-                f"{f(ci[0])}–{f(ci[1])} | {a['n_errors']} | {f(st.get('mean_s'), 2)}/{f(st.get('p95_s'), 2)} | "
+                f"{f(ci[0])}–{f(ci[1])} | {a['n_errors']} | {f(a['pc_success_ran'])} | {f(st.get('mean_s'), 2)}/{f(st.get('p95_s'), 2)} | "
                 f"{f(fc.get('mean_s'), 2)} | {f(a['mean_inference_s'], 0)} | {f(a['mean_env_s'], 0)} | {f(a['mean_wall_s'], 0)} |")
         (out / "summary.md").write_text("\n".join(lines) + "\n")
+        return summary
 
     run()
 

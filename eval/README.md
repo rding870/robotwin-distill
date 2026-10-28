@@ -23,6 +23,40 @@ scripts/run_teacher_frozen.sh teacher_a16 --action-steps 16    # same checkpoint
 (wrapper flags first, then `--`, then any `lerobot-eval` flags, so a student is just a different
 `--policy.path`). Runs are resumable: rerun the same command and finished episodes are skipped.
 
+Before a full run, smoke one seed per task so env/harness faults surface in minutes, not hours:
+```bash
+scripts/run_teacher_frozen.sh smoke_x --max-seeds-per-task 1 --no-video --abort-on-error
+```
+
+## Seeding
+
+Each episode reseeds Python/NumPy/torch (CPU + CUDA) with `sha256(f"{eval_seed}:{task}:{seed}")` before its
+rollout (`rng_seed` in episodes.jsonl). The policy's sampled noise is then a function of that episode alone,
+so a resumed run, a `--tasks` subset and an uninterrupted run all see the same noise for the same
+(task, seed). Remaining nondeterminism is GPU-level (bf16 kernels, `cudnn.benchmark`, CuRobo sampling);
+the reproducibility check measures it rather than assuming it away. Runs before 2026-10-28 (`teacher_v1`)
+seeded once per run and are not comparable episode-for-episode with later runs.
+
+## Errors and validity
+
+An episode that raises (`error` set in episodes.jsonl) is an env/harness fault, not a policy failure. It
+still counts as a failure in `rate %`, and `rate % excl. errors` gives the rate over episodes that ran.
+Any error marks the run **invalid**: `summary.json -> valid=false, tasks_with_errors`, a banner in
+`summary.md`, and exit code 3. Do not report numbers from an invalid run.
+
+## Harness version
+
+`manifest.json -> harness` records this repo's commit, whether `scripts/` had uncommitted changes, and the
+sha256 of `eval_frozen.py`. Only runs from a clean, committed harness are reference numbers.
+
+## Expert-state patches
+
+Some RoboTwin tasks set state in the expert's `play_once()` that `check_success()` reads. RoboTwin's
+`eval_policy.py` runs the expert on the same task object before the policy episode, so it carries over;
+LeRobot's env never runs the expert. `_patch_expert_state()` recomputes that state after `setup_demo()`
+exactly as `play_once()` does (currently `open_laptop.arm_tag`) and lists what it patched in
+`manifest.json -> expert_state_patches`. `put_object_cabinet` has the same pattern but is not in v1.
+
 ## What "latency" means here
 
 LingBot-VA predicts a chunk of 32 actions (2 frames x 16) per denoising pass and then pops them one per

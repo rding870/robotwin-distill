@@ -19,11 +19,16 @@ import dataclasses
 import hashlib
 import json
 import logging
+import os
 import platform
 import socket
 import subprocess
 import sys
 import time
+
+# cuBLAS reads this at first handle creation; it must be set before torch initializes CUDA
+# for torch.use_deterministic_algorithms() to cover cuBLAS matmuls.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -147,6 +152,9 @@ def main():
                     help="on-disk prompt-embedding cache shared across runs (keyed by prompt + text-encoder path)")
     ap.add_argument("--warmup-steps", type=int, default=100,
                     help="untimed warm-up rollout of this many env steps before the first timed episode (0 = off)")
+    ap.add_argument("--no-deterministic", dest="deterministic", action="store_false",
+                    help="restore cudnn.benchmark autotuning (nondeterministic across runs: benchmark picks conv "
+                         "algorithms by timing, so two processes can choose bit-different kernels)")
     ap.add_argument("--nfe", type=int, default=None,
                     help="denoising steps for both the video and the action loop (sets --video-steps and --action-steps)")
     ap.add_argument("--episode-length", default="robotwin",
@@ -225,7 +233,14 @@ def main():
         log.info("run=%s tasks=%d episodes=%d already_done=%d", wrapper.run_name, len(tasks), n_total, len(done))
 
         device = get_safe_torch_device(cfg.policy.device, log=True)
-        torch.backends.cudnn.benchmark = True
+        if wrapper.deterministic:
+            # Bit-reproducible runs: no timing-based algorithm selection, deterministic kernels where
+            # torch has them (warn_only: flash-attn is an external op and its forward is deterministic).
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        else:
+            torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         set_seed(cfg.seed)  # policy load; every episode is reseeded with _episode_seed()
 
@@ -255,6 +270,14 @@ def main():
             "step_limit_per_task": step_limit,
             "eval_seed": cfg.seed,
             "rng_seeding": "per_episode: set_seed(sha256(f'{eval_seed}:{task}:{seed}')[:4] & 0x7fffffff)",
+            "determinism": {
+                "deterministic": wrapper.deterministic,
+                "cudnn_benchmark": torch.backends.cudnn.benchmark,
+                "cudnn_deterministic": torch.backends.cudnn.deterministic,
+                "use_deterministic_algorithms": wrapper.deterministic,
+                "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+                "allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+            },
             "prompt_cache": not wrapper.no_prompt_cache,
             "expert_state_patches": _patch_expert_state(tasks),
             "harness": _harness_version(),
@@ -293,7 +316,7 @@ def main():
         log.info("policy loaded in %.0fs", load_s)
 
         # ---- instrumentation ------------------------------------------------------------------
-        timing = {"chunk": [], "select": [], "chunk_sha": []}
+        timing = {"chunk": [], "select": [], "chunk_sha": [], "obs_sha": []}
 
         def _sync():
             if torch.cuda.is_available():
@@ -301,11 +324,27 @@ def main():
 
         orig_chunk = policy.predict_action_chunk
 
+        def _batch_sha(a, k):
+            # Fingerprint the policy input (the preprocessed observation batch): if two runs diverge
+            # here, the nondeterminism is upstream (renderer/env), not in the policy forward.
+            h = hashlib.sha256()
+            for arg in list(a) + [k[key] for key in sorted(k)]:
+                if isinstance(arg, dict):
+                    for key in sorted(arg):
+                        v = arg[key]
+                        h.update(key.encode())
+                        h.update(_tensor_sha(v).encode() if torch.is_tensor(v) else repr(v).encode())
+                else:
+                    h.update(_tensor_sha(arg).encode() if torch.is_tensor(arg) else repr(arg).encode())
+            return h.hexdigest()[:16]
+
         def timed_chunk(*a, **k):
+            obs_sha = _batch_sha(a, k)
             _sync(); t = time.perf_counter()
             r = orig_chunk(*a, **k)
             _sync(); timing["chunk"].append(time.perf_counter() - t)
             timing["chunk_sha"].append(_tensor_sha(r)[:16])  # outside the timed region
+            timing["obs_sha"].append(obs_sha)
             return r
 
         policy.predict_action_chunk = timed_chunk
@@ -383,7 +422,7 @@ def main():
                     if not wrapper.no_video:
                         def cb(e, _frames=frames):
                             _frames.append(e.envs[0].render())
-                    timing["chunk"].clear(); timing["select"].clear(); timing["chunk_sha"].clear()
+                    timing["chunk"].clear(); timing["select"].clear(); timing["chunk_sha"].clear(); timing["obs_sha"].clear()
                     err = None
                     rng_seed = _episode_seed(cfg.seed, task, seed)
                     set_seed(rng_seed)
@@ -419,6 +458,7 @@ def main():
                         "first_select_s": round(select[0], 4) if select else None,
                         "chunk_sha": list(timing["chunk_sha"]),     # per-chunk action fingerprint (normalized policy output)
                         "actions_sha": hashlib.sha256("".join(timing["chunk_sha"]).encode()).hexdigest()[:16],
+                        "obs_sha": list(timing["obs_sha"]),         # per-chunk policy-input fingerprint (localizes env vs policy nondeterminism)
                         "video": None,
                         "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     }

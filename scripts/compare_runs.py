@@ -94,23 +94,29 @@ def main():
         else:
             bit = sha_a == sha_b
             bit_ok &= bit
-        first_div = None
+        first_div = obs_div = None
         if bit is False:
             ca, cb = a.get("chunk_sha", []), b.get("chunk_sha", [])
             first_div = next((i for i, (x, y) in enumerate(zip(ca, cb)) if x != y), min(len(ca), len(cb)))
+            oa, ob = a.get("obs_sha", []), b.get("obs_sha", [])
+            if oa and ob:  # older runs lack obs fingerprints
+                obs_div = next((i for i, (x, y) in enumerate(zip(oa, ob)) if x != y), None)
         same = all(a[f] == b[f] for f in ("success", "n_steps", "error"))
         out_ok &= same
-        rows.append((k, bit, first_div, a, b, same))
+        rows.append((k, bit, first_div, obs_div, a, b, same))
     verdict["bit_level"] = bit_ok and not missing
     verdict["outcomes"] = out_ok and not missing
 
     lines += ["## 1-2. Episodes", "",
               f"{len(both)} episodes in both runs" + (f"; **{len(missing)} only in one run**: {missing}" if missing else ""), "",
-              "| task | seed | actions identical | first differing chunk | success A/B | steps A/B | error A/B |",
-              "|---|---|---|---|---|---|---|"]
-    for (t, s), bit, fd, a, b, same in rows:
+              "| task | seed | actions identical | first differing chunk | first differing obs | success A/B | steps A/B | error A/B |",
+              "|---|---|---|---|---|---|---|---|"]
+    for (t, s), bit, fd, od, a, b, same in rows:
         mark = "" if same else " **≠**"
-        lines.append(f"| {t} | {s} | {'-' if bit is None else ('yes' if bit else '**no**')} | {'-' if fd is None else fd} | "
+        # obs column: '-' = actions identical or no obs fingerprints; 'none' = inputs identical where
+        # both recorded them (divergence is in the policy forward, not the env/renderer).
+        obs = "-" if fd is None or not (a.get("obs_sha") and b.get("obs_sha")) else ("none" if od is None else od)
+        lines.append(f"| {t} | {s} | {'-' if bit is None else ('yes' if bit else '**no**')} | {'-' if fd is None else fd} | {obs} | "
                      f"{a['success']}/{b['success']}{mark} | {a['n_steps']}/{b['n_steps']} | "
                      f"{bool(a['error'])}/{bool(b['error'])} |")
     lines.append("")

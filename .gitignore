@@ -11,3 +11,5 @@ lerobot/
 RoboTwin/
 .cache/
 lingbot-va/
+distill/runs/
+distill/exports/

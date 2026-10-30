@@ -11,10 +11,16 @@ dataset (no VAE or text encoder on the GPU).
 """
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import random
 import shutil
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -178,6 +184,52 @@ class Roles:
 
 
 # ------------------------------------------------------------------------------------------ training
+def write_manifest(args, out: Path, n_episodes: int, trainable: int, seed: int):
+    """Everything needed to reproduce this training run, next to its checkpoints (cf. eval manifests).
+    Training is seeded but not bit-deterministic (no deterministic-kernel flags); the checkpoint is
+    the reproducible artifact."""
+    proj = Path(__file__).resolve().parents[1]
+
+    def git(*cmd):
+        try:
+            return subprocess.check_output(["git", "-C", str(proj), *cmd], text=True).strip()
+        except Exception:
+            return None
+
+    gpu = torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None
+    import peft
+    manifest = {
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "argv": sys.argv[1:],
+        "args": {k: v for k, v in vars(args).items() if k != "cmd"},
+        "seed": seed,
+        "code": {
+            "git_sha": git("rev-parse", "HEAD"),
+            "distill_dirty": bool(git("status", "--porcelain", "--", "distill")),
+            "dmd2_lora_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        },
+        "pins": {"teacher": TEACHER, "teacher_revision": TEACHER_REV, "data_repo": DATA_REPO,
+                 "data_revision": DATA_REV, "data_subset": DATA_SUBSET, "data_path": str(DATA)},
+        "lora": {"rank": args.rank, "alpha": args.rank, "targets": LORA_TARGETS,
+                 "adapters": ["default (generator)", "fake (fake score)"]},
+        "dataset": {"n_episodes": n_episodes, "tasks": args.tasks},
+        "trainable_params_per_adapter": trainable,
+        "tau_range": TAU_RANGE,
+        "window": WINDOW,
+        "env": {k: os.environ.get(k) for k in ("CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF")},
+        "software": {"python": platform.python_version(), "torch": torch.__version__,
+                     "cuda": torch.version.cuda, "peft": peft.__version__, "numpy": np.__version__},
+        "hardware": {
+            "hostname": socket.gethostname(),
+            "gpu": gpu.name if gpu else None,
+            "gpu_mem_gb": round(gpu.total_memory / 2**30, 1) if gpu else None,
+            "driver": subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                                     capture_output=True, text=True).stdout.strip() or None,
+        },
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
+
+
 def masked_mse(a, b, m=None):  # frame 0 is the conditioning frame at inference: never a target
     a, b = a[:, :, 1:], b[:, :, 1:]
     if m is None:
@@ -202,7 +254,9 @@ def train(args):
     s_act = FlowMatchScheduler(shift=cfg.action_snr_shift, sigma_min=0.0, extra_one_step=True); s_act.set_timesteps(args.nfe)
     tl, ta = R.policy._train_sched_latent, R.policy._train_sched_action  # 1000-step training grids
     opt = {n: torch.optim.AdamW(R.params[n], lr=args.lr, betas=(0.9, 0.95), weight_decay=0.0) for n in ("default", "fake")}
-    print(f"{len(data)} episodes | trainable/adapter {sum(p.numel() for p in R.params['default']) / 1e6:.1f} M")
+    n_train = sum(p.numel() for p in R.params["default"])
+    write_manifest(args, out, len(data), n_train, seed=0)
+    print(f"{len(data)} episodes | trainable/adapter {n_train / 1e6:.1f} M")
 
     for step in range(1, args.steps + 1):
         ep = data[random.randrange(len(data))]
